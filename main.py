@@ -47,7 +47,7 @@ def analyze_job(job_snippet, user_profile):
     1. Do not include any conversational filler.
     2. Do NOT include markdown code blocks (e.g., do not use ```json)
     3. Ensure the JSON is properly escaped (no unescaped newlines inside string values).
-    4. If information is missing from the job description, set the value to "N/A".
+    4. If information is missing, set the value to "N/A".
     5. Format all dates as YYYY-MM-DD. 
     6. The current date is {today}.
     """
@@ -83,12 +83,26 @@ def analyze_job(job_snippet, user_profile):
                     "type": "text", 
                     "text": f"""
                     Analyze this job snippet: {job_snippet}.
-                    Calculate a match score as weighted average of:
+                    Calculate a match_score as weighted average of:
                     1) "Tech alignment" (40%): Matches between job required tools and user profile,
                     2) "Experience level" (30%): Does the job seniority level matches the user profile?,
                     3) "Domain relevance" (20%): Does the industry or role purpose matches the user profile background?, and
                     4) "Constraints" (10%): Does location/remote policy fit the user profile requirements?
-                    Return a JSON object with these keys: "title", "company", "seniority", "responsibilities", "skills_required", "tools_required", "language", "location", "match_score", "rationale", "publication_date", "date_of_search", "application_deadline"
+                    Remember that the value for the "match_score" key is an integer number, only return this.
+                    After having completed the analysis and computation of the score return a JSON object with these keys (in this order please):
+                    1) "title",
+                    2) "company",
+                    3) "seniority",
+                    4) "responsibilities",
+                    5) "skills_required",
+                    6) "tools_required",
+                    7) "language",
+                    8) "location",
+                    9) "match_score",
+                    10) "rationale",
+                    11) "publication_date",
+                    12) "date_of_search",
+                    13) "application_deadline"
                     """
                 }
             ]
@@ -142,6 +156,10 @@ def save_seen_jobs(seen_jobs):
 if __name__ == "__main__":
     # 1. Load Data
     seen_jobs = load_seen_jobs()
+    if not os.path.exists("job_results.csv"):
+        print("CSV missing! Clearing cache to start fresh...")
+        if os.path.exists("seen_jobs.json"):
+            os.remove("seen_jobs.json")
     
     # 2. Load Profile
     with open("my_profile.md", "r") as f:
@@ -165,8 +183,25 @@ if __name__ == "__main__":
         print(f"Snippet: {job.get('snippet')}")
         print(f"Link: {job.get('link')}")
         print(f"Analyzing...")
-        analysis = analyze_job(job.get('snippet'), my_profile)
-        analysis['application_link'] = job.get('link') # Add the link back in the table
+        raw_analysis = analyze_job(job.get('snippet'), my_profile)
+        #raw_analysis['application_link'] = job.get('link') # Add the link back in the table
+        analysis = {
+            "title": raw_analysis.get("title"),
+            "company": raw_analysis.get("company"),
+            "seniority": raw_analysis.get("seniority"),
+            "responsibilities": raw_analysis.get("responsibilities"),
+            "skills_required": raw_analysis.get("skills_required"),
+            "tools_required": raw_analysis.get("tools_required"),
+            "language": raw_analysis.get("language"),
+            "location": raw_analysis.get("location"),
+            "match_score": raw_analysis.get("match_score"), # Use the final score
+            "rationale": raw_analysis.get("rationale"),
+            "publication_date": raw_analysis.get("publication_date"),
+            "date_of_search": raw_analysis.get("date_of_search"),
+            "application_deadline": raw_analysis.get("application_deadline"),
+            "link": job.get('link'),
+        }
+        #analysis["tech_score"] = raw_analysis.get("tech_alignment", {}).get("score", 0)
         all_results.append(analysis)
         # Update seen list immediately so if script crashes, we don't re-process
         seen_jobs.append(job.get('link'))

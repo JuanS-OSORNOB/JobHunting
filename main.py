@@ -22,7 +22,7 @@ def get_job_listings(query, location):
     # We use 'site:linkedin.com/jobs' to force Google to only show LinkedIn job pages
     payload = {
         "q": f"site:linkedin.com/jobs {query} in {location}",
-        "num": 5  # Start with 5 results to avoid over-fetching
+        "num": 10  # Start with 10 results to avoid over-fetching
     }
     
     headers = {
@@ -37,6 +37,22 @@ def get_job_listings(query, location):
     except Exception as e:
         print(f"An error occurred: {e}")
         return []
+
+def get_all_opportunities(my_location="France"):
+    queries = ["Geophysical Researcher", "Géophysicien", "Geological Engineer"]
+    all_new_jobs = []
+    
+    for q in queries:
+        print(f"Searching for new opportunities: '{q}' in '{my_location}'...")
+        # Increase to 10 for better coverage per query
+        results = get_job_listings(q, my_location)
+        
+        # Deduplicate on the fly
+        new_jobs = [j for j in results if j.get('link') not in seen_jobs]
+        print(f"Found {len(results)} total jobs. {len(new_jobs)} are new.")
+        all_new_jobs.extend(new_jobs)
+        
+    return all_new_jobs
     
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -120,8 +136,6 @@ def analyze_job(job_snippet, user_profile):
     
     content = response.content[0].text
     
-    # --- ADD THIS PARSING LOGIC BELOW ---
-    
     # Extract only the JSON part using Regex (searches for everything between { and })
     
     # Try to find the JSON
@@ -166,19 +180,21 @@ if __name__ == "__main__":
         my_profile = f.read()
 
     # 3. Define your search criteria
-    my_job_search = "Geophysical Researcher"
+    my_job_search = "Geophysicist"
     my_location = "France"
     
-    print(f"Searching for new opportunities: '{my_job_search}' in '{my_location}'...")
     
     # 4. Search jobs
-    jobs = get_job_listings(my_job_search, my_location)
-    new_jobs = [j for j in jobs if j.get('link') not in seen_jobs]
-    print(f"Found {len(jobs)} total jobs. {len(new_jobs)} are new.")
+    #print(f"Searching for new opportunities: '{my_job_search}' in '{my_location}'...")
+    #jobs = get_job_listings(my_job_search, my_location)
+    #new_jobs = [j for j in jobs if j.get('link') not in seen_jobs]
+    #print(f"Found {len(jobs)} total jobs. {len(new_jobs)} are new.")
+    
+    jobs = get_all_opportunities(my_location)
 
     # 5. Analyze each job
     all_results = []
-    for job in new_jobs:
+    for job in jobs:
         print(f"\nFound: {job.get('title')}")
         print(f"Snippet: {job.get('snippet')}")
         print(f"Link: {job.get('link')}")

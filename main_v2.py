@@ -13,51 +13,100 @@ today = date.today().isoformat()
 # Load your API keys
 load_dotenv()
 
-def get_job_listings(query, location):
+response = requests.post(
+    "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire",
+    data={
+        "grant_type": "client_credentials",
+        "client_id": os.getenv("FT_CLIENT_ID"),
+        "client_secret": os.getenv("FT_CLIENT_SECRET"),
+        "scope": "api_offresdemploiv2 o2dsoffre",
+    },
+    headers={"Content-Type": "application/x-www-form-urlencoded"},
+)
+print(response.status_code, response.json())
+
+
+FT_TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
+FT_SEARCH_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
+
+_ft_token_cache = {"token": None}
+
+def get_ft_access_token():
     """
-    Queries the Serper API for LinkedIn job results.
+    Client-credentials OAuth2 flow against France Travail.
+    Requires FT_CLIENT_ID / FT_CLIENT_SECRET from a francetravail.io app
+    subscribed to 'Offres d'emploi v2' (scope: api_offresdemploiv2 o2dsoffre).
+    Caches the token in memory for the life of the process.
     """
-    url = "https://google.serper.dev/search"
-    
-    # We use 'site:linkedin.com/jobs' to force Google to only show LinkedIn job pages
+    if _ft_token_cache["token"]:
+        return _ft_token_cache["token"]
+
     payload = {
-        "q": f"site:linkedin.com/jobs {query} in {location}",
-<<<<<<< HEAD
-        "num": 5  # Start with 5 results to avoid over-fetching #TODO Test how many results is optimal based on the money cap. 
-=======
-        "num": 10  # Start with 10 results to avoid over-fetching
->>>>>>> f447f01eb7a0669f41f04562e5326af3dad0a745
+        "grant_type": "client_credentials",
+        "client_id": os.getenv("FT_CLIENT_ID"),
+        "client_secret": os.getenv("FT_CLIENT_SECRET"),
+        "scope": "api_offresdemploiv2 o2dsoffre",
     }
-    
-    headers = {
-        'X-API-KEY': os.getenv("SERPER_API_KEY"),
-        'Content-Type': 'application/json'
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    response = requests.post(FT_TOKEN_URL, data=payload, headers=headers)
+    response.raise_for_status()
+    token = response.json()["access_token"]
+    _ft_token_cache["token"] = token
+    return token
+
+def get_job_listings(query, contract_type="CDI", max_results=50):
+    """
+    Queries the official France Travail 'Offres d'emploi v2' API.
+    Returns live, structured postings (no expired/duplicate aggregator noise).
+    contract_type: 'CDI', 'CDD', 'MIS', 'SAI', 'LIB' or None for all types.
+    """
+    token = get_ft_access_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {
+        "motsCles": query,
+        "range": f"0-{max_results - 1}",  # API pagination is inclusive, max 149 per call
+        "sort": 1,  # sort by most recent publication date
     }
-    
+    if contract_type:
+        params["typeContrat"] = contract_type
+
     try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status() # This will crash if the request fails (good for debugging)
-        return response.json().get('organic', [])
+        response = requests.get(FT_SEARCH_URL, headers=headers, params=params)
+        # France Travail returns 200 (full page) or 206 (partial content) on success
+        if response.status_code not in (200, 206):
+            response.raise_for_status()
+        return response.json().get("resultats", [])
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred querying France Travail: {e}")
         return []
 
-def get_all_opportunities(my_location="France"):
-    queries = ["Geophysical Researcher", "Géophysicien", "Geological Engineer"]
+def get_all_opportunities(seen_jobs, contract_type="CDI"):
+    queries = ["géophysicien", "ingénieur géophysique", "géologue ingénieur", "seismologue"]
     all_new_jobs = []
-    
+
     for q in queries:
-        print(f"Searching for new opportunities: '{q}' in '{my_location}'...")
-        # Increase to 10 for better coverage per query
-        results = get_job_listings(q, my_location)
-        
-        # Deduplicate on the fly
-        new_jobs = [j for j in results if j.get('link') not in seen_jobs]
+        print(f"Searching for new opportunities: '{q}' ({contract_type or 'any contract'})...")
+        results = get_job_listings(q, contract_type=contract_type)
+
+        # Deduplicate on the fly, normalize to the 'link'/'snippet' shape the rest of the script expects
+        new_jobs = []
+        for offer in results:
+            link = offer.get("origineOffre", {}).get("urlOrigine") or offer.get("id")
+            if link in seen_jobs:
+                continue
+            new_jobs.append({
+                "title": offer.get("intitule"),
+                "snippet": offer.get("description"),
+                "link": link,
+                "publication_date": offer.get("dateCreation"),
+            })
         print(f"Found {len(results)} total jobs. {len(new_jobs)} are new.")
         all_new_jobs.extend(new_jobs)
-        
+
     return all_new_jobs
-    
+
+
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -171,7 +220,12 @@ def save_seen_jobs(seen_jobs):
         json.dump(seen_jobs, f)
 
 # --- Execution ---
+import time
+from datetime import timedelta
+
+#region Main
 if __name__ == "__main__":
+    start = time.perf_counter()
     # 1. Load Data
     seen_jobs = load_seen_jobs()
     if not os.path.exists("job_results.csv"):
@@ -181,29 +235,18 @@ if __name__ == "__main__":
     
     # 2. Load Profile
     with open("my_profile.md", "r") as f:
-        my_profile = f.read() #TODO Will it work better if I do it in french?
+        my_profile = f.read()
 
-    # 3. Define your search criteria
-<<<<<<< HEAD
-    my_job_search = "Geophysical Researcher" #TODO Test different search words
-=======
-    my_job_search = "Geophysicist"
->>>>>>> f447f01eb7a0669f41f04562e5326af3dad0a745
-    my_location = "France"
-    
-    
-    # 4. Search jobs
-    #print(f"Searching for new opportunities: '{my_job_search}' in '{my_location}'...")
-    #jobs = get_job_listings(my_job_search, my_location)
-    #new_jobs = [j for j in jobs if j.get('link') not in seen_jobs]
-    #print(f"Found {len(jobs)} total jobs. {len(new_jobs)} are new.")
-    
-    jobs = get_all_opportunities(my_location)
+    # 3. Search jobs via France Travail (set contract_type=None to also see CDD/other contracts)
+    jobs = get_all_opportunities(seen_jobs, contract_type="CDI")
 
     # 5. Analyze each job
     all_results = []
+    counter = 0
     for job in jobs:
-        print(f"\nFound: {job.get('title')}")
+        print(f"\n\nPROCESSING JOB {counter + 1}/{len(jobs)}:")
+        print(f"Title: {job.get('title')}")
+        print(f"Publication Date: {job.get('publication_date')}")
         print(f"Snippet: {job.get('snippet')}")
         print(f"Link: {job.get('link')}")
         print(f"Analyzing...")
@@ -229,8 +272,10 @@ if __name__ == "__main__":
         all_results.append(analysis)
         # Update seen list immediately so if script crashes, we don't re-process
         seen_jobs.append(job.get('link'))
-    
+        counter += 1
+    print(f"\n\nProcessed {counter} jobs. Saving seen jobs cache...")
     save_seen_jobs(seen_jobs)
+
     # 6. Save to CSV for easy viewing
     if all_results:
         df = pd.DataFrame(all_results)
@@ -238,3 +283,8 @@ if __name__ == "__main__":
         print(f"\nSuccess! Added {len(all_results)} new jobs to job_results.csv.")
     else:
         print("\nNo new jobs to process.")
+
+    end = time.perf_counter()
+    elapsed = end - start
+    print(f"Execution time: {timedelta(seconds=round(elapsed))}")
+#endregion Main

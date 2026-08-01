@@ -13,19 +13,6 @@ today = date.today().isoformat()
 # Load your API keys
 load_dotenv()
 
-response = requests.post(
-    "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire",
-    data={
-        "grant_type": "client_credentials",
-        "client_id": os.getenv("FT_CLIENT_ID"),
-        "client_secret": os.getenv("FT_CLIENT_SECRET"),
-        "scope": "api_offresdemploiv2 o2dsoffre",
-    },
-    headers={"Content-Type": "application/x-www-form-urlencoded"},
-)
-print(response.status_code, response.json())
-
-
 FT_TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
 FT_SEARCH_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
 
@@ -84,18 +71,26 @@ def get_job_listings(query, contract_type="CDI", max_results=50):
 def get_all_opportunities(seen_jobs, contract_type="CDI"):
     queries = ["géophysicien", "ingénieur géophysique", "géologue ingénieur", "seismologue"]
     all_new_jobs = []
+    # Seed with everything already processed in past runs, then keep updating
+    # it live as we go so overlapping queries in THIS run don't duplicate each other.
+    found_this_run = set(seen_jobs)
 
     for q in queries:
         print(f"Searching for new opportunities: '{q}' ({contract_type or 'any contract'})...")
         results = get_job_listings(q, contract_type=contract_type)
 
-        # Deduplicate on the fly, normalize to the 'link'/'snippet' shape the rest of the script expects
         new_jobs = []
         for offer in results:
-            link = offer.get("origineOffre", {}).get("urlOrigine") or offer.get("id")
-            if link in seen_jobs:
+            offer_id = offer.get("id")  # France Travail's own offer id — more reliable than the URL
+            link = offer.get("origineOffre", {}).get("urlOrigine") or offer_id
+            dedupe_key = offer_id or link
+
+            if not dedupe_key or dedupe_key in found_this_run:
                 continue
+            found_this_run.add(dedupe_key)
+
             new_jobs.append({
+                "id": offer_id,
                 "title": offer.get("intitule"),
                 "snippet": offer.get("description"),
                 "link": link,
@@ -220,10 +215,9 @@ def save_seen_jobs(seen_jobs):
         json.dump(seen_jobs, f)
 
 # --- Execution ---
+#region Main
 import time
 from datetime import timedelta
-
-#region Main
 if __name__ == "__main__":
     start = time.perf_counter()
     # 1. Load Data
@@ -252,7 +246,8 @@ if __name__ == "__main__":
         print(f"Analyzing...")
         raw_analysis = analyze_job(job.get('snippet'), my_profile)
         #raw_analysis['application_link'] = job.get('link') # Add the link back in the table
-        analysis = { #TODO FIX THE DUPLICATES AND ADD THE OFFRE ID FROM FRANCETRAVAIL
+        analysis = {
+            "ft_id": job.get("id"),#FranceTravail ID
             "title": raw_analysis.get("title"),
             "company": raw_analysis.get("company"),
             "seniority": raw_analysis.get("seniority"),
@@ -263,7 +258,6 @@ if __name__ == "__main__":
             "location": raw_analysis.get("location"),
             "match_score": raw_analysis.get("match_score"), # Use the final score
             "rationale": raw_analysis.get("rationale"),
-            #"publication_date": raw_analysis.get("publication_date"),
             "publication_date": job.get('publication_date'),
             "date_of_search": raw_analysis.get("date_of_search"),
             "application_deadline": raw_analysis.get("application_deadline"),
@@ -272,16 +266,14 @@ if __name__ == "__main__":
         #analysis["tech_score"] = raw_analysis.get("tech_alignment", {}).get("score", 0)
         all_results.append(analysis)
         # Update seen list immediately so if script crashes, we don't re-process
-        seen_jobs.append(job.get('link'))
+        seen_jobs.append(job.get('id') or job.get('link'))
         counter += 1
-    print(f"\n\nProcessed {counter} jobs. Saving seen jobs cache...")
+    
     save_seen_jobs(seen_jobs)
-
     # 6. Save to CSV for easy viewing
     if all_results:
         df = pd.DataFrame(all_results)
-        # Remove duplicate rows based on the 'link' column
-        df = df.drop_duplicates(subset=['link'], keep='first')
+        df = df.drop_duplicates(subset=['ft_id'], keep='first')  # Second safety net (belt-and-suspenders); get_all_opportunities already dedupes upstream
         filename = "Job_Results_FranceTravail.csv" 
         df.to_csv(filename, mode='a', index=False, header=not os.path.exists(filename))
         print(f"\nSuccess! Added {len(all_results)} new jobs to {filename}.")

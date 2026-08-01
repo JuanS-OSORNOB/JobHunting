@@ -22,7 +22,7 @@ def get_job_listings(query, location):
     # We use 'site:linkedin.com/jobs' to force Google to only show LinkedIn job pages
     payload = {
         "q": f"site:linkedin.com/jobs {query} in {location}",
-        "num": 5  # Start with 5 results to avoid over-fetching
+        "num": 5  # Start with 5 results to avoid over-fetching #TODO Test how many results is optimal based on the money cap. 
     }
     
     headers = {
@@ -163,10 +163,10 @@ if __name__ == "__main__":
     
     # 2. Load Profile
     with open("my_profile.md", "r") as f:
-        my_profile = f.read()
+        my_profile = f.read() #TODO Will it work better if I do it in french?
 
     # 3. Define your search criteria
-    my_job_search = "Geophysical Researcher"
+    my_job_search = "Geophysical Researcher" #TODO Test different search words
     my_location = "France"
     
     print(f"Searching for new opportunities: '{my_job_search}' in '{my_location}'...")

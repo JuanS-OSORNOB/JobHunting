@@ -74,6 +74,7 @@ def get_all_opportunities(seen_jobs, contract_type="CDI"):
     # Seed with everything already processed in past runs, then keep updating
     # it live as we go so overlapping queries in THIS run don't duplicate each other.
     found_this_run = set(seen_jobs)
+    duplicate_count = 0
 
     for q in queries:
         print(f"Searching for new opportunities: '{q}' ({contract_type or 'any contract'})...")
@@ -86,6 +87,8 @@ def get_all_opportunities(seen_jobs, contract_type="CDI"):
             dedupe_key = offer_id or link
 
             if not dedupe_key or dedupe_key in found_this_run:
+                if dedupe_key: # only counts real duplicates, not missing keys
+                    duplicate_count += 1
                 continue
             found_this_run.add(dedupe_key)
 
@@ -98,6 +101,7 @@ def get_all_opportunities(seen_jobs, contract_type="CDI"):
             })
         print(f"Found {len(results)} total jobs. {len(new_jobs)} are new.")
         all_new_jobs.extend(new_jobs)
+    print(f"\nSummary: {len(all_new_jobs)} unique new jobs found, {duplicate_count} duplicates skipped across queries.")
 
     return all_new_jobs
 
@@ -112,7 +116,7 @@ def analyze_job(job_snippet, user_profile):
     2. Do NOT include markdown code blocks (e.g., do not use ```json)
     3. Ensure the JSON is properly escaped (no unescaped newlines inside string values).
     4. If information is missing, set the value to "N/A".
-    5. Format all dates as YYYY-MM-DD. 
+    5. Format all dates as YYYY-MM-DD.
     6. The current date is {today}.
     """
     
@@ -232,9 +236,9 @@ if __name__ == "__main__":
         my_profile = f.read()
 
     # 3. Search jobs via France Travail (set contract_type=None to also see CDD/other contracts)
-    jobs = get_all_opportunities(seen_jobs, contract_type="CDI")
+    jobs = get_all_opportunities(seen_jobs, contract_type = "CDI")
 
-    # 5. Analyze each job
+    # 4. Analyze each job
     all_results = []
     counter = 0
     for job in jobs:
@@ -270,10 +274,13 @@ if __name__ == "__main__":
         counter += 1
     
     save_seen_jobs(seen_jobs)
-    # 6. Save to CSV for easy viewing
+    # 5. Save to CSV for easy viewing
     if all_results:
         df = pd.DataFrame(all_results)
+        before_count = len(df)
         df = df.drop_duplicates(subset=['ft_id'], keep='first')  # Second safety net (belt-and-suspenders); get_all_opportunities already dedupes upstream
+        removed = before_count - len(df)
+        print(f"Removed {removed} duplicate(s) at the final DataFrame stage.")
         filename = "Job_Results_FranceTravail.csv" 
         df.to_csv(filename, mode='a', index=False, header=not os.path.exists(filename))
         print(f"\nSuccess! Added {len(all_results)} new jobs to {filename}.")
